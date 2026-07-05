@@ -285,9 +285,13 @@ write_cloudflare_hooks() {
 set -Eeuo pipefail
 # shellcheck source=/dev/null
 source /etc/fast-webvnc/cf-credentials
+# Pass the bearer token via a 0600 header file so it never appears in argv/ps.
+auth_header_file="$(mktemp)"
+trap 'rm -f "$auth_header_file"' EXIT
+printf 'Authorization: Bearer %s\n' "${CF_API_TOKEN}" > "$auth_header_file"
 curl -sf -X POST \
   "https://api.cloudflare.com/client/v4/zones/${CF_ZONE_ID}/dns_records" \
-  -H "Authorization: Bearer ${CF_API_TOKEN}" \
+  -H @"$auth_header_file" \
   -H "Content-Type: application/json" \
   --data "{\"type\":\"TXT\",\"name\":\"_acme-challenge.${CERTBOT_DOMAIN}\",\"content\":\"${CERTBOT_VALIDATION}\",\"ttl\":60}" \
   >/dev/null
@@ -301,13 +305,17 @@ HOOK_EOF
 set -Eeuo pipefail
 # shellcheck source=/dev/null
 source /etc/fast-webvnc/cf-credentials
+# Pass the bearer token via a 0600 header file so it never appears in argv/ps.
+auth_header_file="$(mktemp)"
+trap 'rm -f "$auth_header_file"' EXIT
+printf 'Authorization: Bearer %s\n' "${CF_API_TOKEN}" > "$auth_header_file"
 record_id="$(curl -sf \
   "https://api.cloudflare.com/client/v4/zones/${CF_ZONE_ID}/dns_records?type=TXT&name=_acme-challenge.${CERTBOT_DOMAIN}&content=${CERTBOT_VALIDATION}" \
-  -H "Authorization: Bearer ${CF_API_TOKEN}" \
+  -H @"$auth_header_file" \
   | python3 -c 'import sys,json; r=json.load(sys.stdin)["result"]; print(r[0]["id"]) if r else ""')"
 [[ -n "$record_id" ]] && curl -sf -X DELETE \
   "https://api.cloudflare.com/client/v4/zones/${CF_ZONE_ID}/dns_records/${record_id}" \
-  -H "Authorization: Bearer ${CF_API_TOKEN}" >/dev/null || true
+  -H @"$auth_header_file" >/dev/null || true
 HOOK_EOF
   chmod 0755 "$CF_CLEANUP_HOOK"
 

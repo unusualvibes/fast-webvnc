@@ -1,11 +1,3 @@
-tcp_connect() {
-  local host="$1"
-  local port="$2"
-
-  # shellcheck disable=SC2016
-  timeout 3 bash -c ':</dev/tcp/$1/$2' _ "$host" "$port" >/dev/null 2>&1
-}
-
 vnc_protocol_responds() {
   local host="$1"
   local port="$2"

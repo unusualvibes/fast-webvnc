@@ -32,6 +32,7 @@ Install options:
   --password VALUE            HTTPS Basic Auth password. Prefer env/prompt; argv leaks.
   --vnc-host HOST             Existing VNC backend host. Default: 127.0.0.1.
   --vnc-port PORT             Existing VNC backend port. Default: 5900.
+  --auto-vnc                  Auto-enable/create a localhost VNC backend (default).
   --no-auto-vnc               Do not auto-enable/create a localhost VNC backend.
   --novnc-port PORT           Local noVNC/websockify port. Default: 6080.
   --https-port PORT           Nginx HTTPS port. Default: 443.

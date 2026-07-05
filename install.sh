@@ -201,6 +201,7 @@ Install options:
   --password VALUE            HTTPS Basic Auth password. Prefer env/prompt; argv leaks.
   --vnc-host HOST             Existing VNC backend host. Default: 127.0.0.1.
   --vnc-port PORT             Existing VNC backend port. Default: 5900.
+  --auto-vnc                  Auto-enable/create a localhost VNC backend (default).
   --no-auto-vnc               Do not auto-enable/create a localhost VNC backend.
   --novnc-port PORT           Local noVNC/websockify port. Default: 6080.
   --https-port PORT           Nginx HTTPS port. Default: 443.
@@ -756,8 +757,16 @@ validate_install_options() {
     die "$EXIT_USAGE" "--vnc-host may contain only letters, numbers, dots, underscores, and hyphens."
   fi
 
-  if [[ -z "$HOSTNAME_VALUE" || "$HOSTNAME_VALUE" == *"/"* || "$HOSTNAME_VALUE" == *":"* ]]; then
-    die "$EXIT_USAGE" "--hostname must be a hostname or IPv4 address, not a URL."
+  if [[ -z "$HOSTNAME_VALUE" ]]; then
+    die "$EXIT_USAGE" "--hostname must be a hostname or IPv4 address."
+  fi
+
+  # Strict allowlist for every cert mode: the hostname is interpolated into the
+  # generated Nginx server_name directive and into openssl -subj/-addext, so
+  # whitespace and shell/Nginx metacharacters (;, {, }, #, $, /, :, newlines)
+  # must be rejected to prevent config injection from untrusted hostname sources.
+  if ! [[ "$HOSTNAME_VALUE" =~ ^[A-Za-z0-9.-]+$ ]]; then
+    die "$EXIT_USAGE" "--hostname may contain only letters, numbers, dots, and hyphens (a hostname or IPv4 address), not a URL or special characters."
   fi
 
   validate_web_user
@@ -845,6 +854,24 @@ validate_letsencrypt_options() {
   fi
 }
 
+warn_if_key_world_accessible() {
+  local key_file="$1"
+  local mode
+  local group_digit
+  local other_digit
+
+  command -v stat >/dev/null 2>&1 || return 0
+
+  mode="$(stat -Lc '%a' "$key_file" 2>/dev/null || true)"
+  [[ -n "$mode" ]] || return 0
+
+  group_digit="${mode: -2:1}"
+  other_digit="${mode: -1}"
+  if (( group_digit != 0 || other_digit != 0 )); then
+    warn "Provided private key ${key_file} is group/world-accessible (mode ${mode}). The installer references it in place; restrict it with: chmod 600 ${key_file}"
+  fi
+}
+
 validate_provided_cert_options() {
   if [[ "$CERT_MODE" != "provided" ]]; then
     return
@@ -860,12 +887,15 @@ validate_provided_cert_options() {
     fi
     if [[ ! -f "$PROVIDED_KEY_FILE" ]]; then
       warn "Dry-run continuing although provided private key does not exist here: ${PROVIDED_KEY_FILE}"
+    elif [[ -f "$PROVIDED_KEY_FILE" ]]; then
+      warn_if_key_world_accessible "$PROVIDED_KEY_FILE"
     fi
     return
   fi
 
   [[ -f "$PROVIDED_CERT_FILE" ]] || die "$EXIT_PRECHECK" "Provided certificate file not found: ${PROVIDED_CERT_FILE}"
   [[ -f "$PROVIDED_KEY_FILE" ]] || die "$EXIT_PRECHECK" "Provided private key file not found: ${PROVIDED_KEY_FILE}"
+  warn_if_key_world_accessible "$PROVIDED_KEY_FILE"
 }
 
 require_root() {
@@ -1219,14 +1249,6 @@ detect_novnc_web_root() {
 }
 
 # ---- src/50-network-vnc.sh ----
-
-tcp_connect() {
-  local host="$1"
-  local port="$2"
-
-  # shellcheck disable=SC2016
-  timeout 3 bash -c ':</dev/tcp/$1/$2' _ "$host" "$port" >/dev/null 2>&1
-}
 
 vnc_protocol_responds() {
   local host="$1"
@@ -2436,9 +2458,13 @@ write_cloudflare_hooks() {
 set -Eeuo pipefail
 # shellcheck source=/dev/null
 source /etc/fast-webvnc/cf-credentials
+# Pass the bearer token via a 0600 header file so it never appears in argv/ps.
+auth_header_file="$(mktemp)"
+trap 'rm -f "$auth_header_file"' EXIT
+printf 'Authorization: Bearer %s\n' "${CF_API_TOKEN}" > "$auth_header_file"
 curl -sf -X POST \
   "https://api.cloudflare.com/client/v4/zones/${CF_ZONE_ID}/dns_records" \
-  -H "Authorization: Bearer ${CF_API_TOKEN}" \
+  -H @"$auth_header_file" \
   -H "Content-Type: application/json" \
   --data "{\"type\":\"TXT\",\"name\":\"_acme-challenge.${CERTBOT_DOMAIN}\",\"content\":\"${CERTBOT_VALIDATION}\",\"ttl\":60}" \
   >/dev/null
@@ -2452,13 +2478,17 @@ HOOK_EOF
 set -Eeuo pipefail
 # shellcheck source=/dev/null
 source /etc/fast-webvnc/cf-credentials
+# Pass the bearer token via a 0600 header file so it never appears in argv/ps.
+auth_header_file="$(mktemp)"
+trap 'rm -f "$auth_header_file"' EXIT
+printf 'Authorization: Bearer %s\n' "${CF_API_TOKEN}" > "$auth_header_file"
 record_id="$(curl -sf \
   "https://api.cloudflare.com/client/v4/zones/${CF_ZONE_ID}/dns_records?type=TXT&name=_acme-challenge.${CERTBOT_DOMAIN}&content=${CERTBOT_VALIDATION}" \
-  -H "Authorization: Bearer ${CF_API_TOKEN}" \
+  -H @"$auth_header_file" \
   | python3 -c 'import sys,json; r=json.load(sys.stdin)["result"]; print(r[0]["id"]) if r else ""')"
 [[ -n "$record_id" ]] && curl -sf -X DELETE \
   "https://api.cloudflare.com/client/v4/zones/${CF_ZONE_ID}/dns_records/${record_id}" \
-  -H "Authorization: Bearer ${CF_API_TOKEN}" >/dev/null || true
+  -H @"$auth_header_file" >/dev/null || true
 HOOK_EOF
   chmod 0755 "$CF_CLEANUP_HOOK"
 
