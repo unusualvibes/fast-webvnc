@@ -57,6 +57,31 @@ mkdir -p "$OUT_DIR"
 
 archive="${OUT_DIR}/fast-webvnc-${VERSION}.tar.gz"
 prefix="fast-webvnc-${VERSION}/"
+required_paths=(
+  CHANGELOG.md
+  LICENSE
+  README.md
+  install.sh
+  scripts
+  src
+)
+optional_paths=(
+  CONTRIBUTING.md
+)
+release_paths=("${required_paths[@]}")
+
+for path in "${required_paths[@]}"; do
+  if [[ ! -e "${ROOT_DIR}/${path}" ]]; then
+    printf 'Missing required release path: %s\n' "$path" >&2
+    exit 1
+  fi
+done
+
+for path in "${optional_paths[@]}"; do
+  if [[ -e "${ROOT_DIR}/${path}" ]]; then
+    release_paths+=("$path")
+  fi
+done
 
 tar \
   --exclude=.git \
@@ -64,13 +89,7 @@ tar \
   --transform="s,^,${prefix}," \
   -czf "$archive" \
   -C "$ROOT_DIR" \
-  CHANGELOG.md \
-  CONTRIBUTING.md \
-  LICENSE \
-  README.md \
-  install.sh \
-  scripts \
-  src
+  "${release_paths[@]}"
 
 printf 'Created %s\n' "$archive"
 if command -v sha256sum >/dev/null 2>&1; then
