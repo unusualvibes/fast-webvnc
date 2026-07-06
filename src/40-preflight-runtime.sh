@@ -1,3 +1,6 @@
+# 40-preflight-runtime.sh — package installation, the dedicated service user,
+# and detection of runtime values (LAN IPs, hostnames, the noVNC web root).
+
 run_apt() {
   if (( DRY_RUN )); then
     info "DRY-RUN: DEBIAN_FRONTEND=noninteractive ${APT_CMD} $*"
@@ -48,6 +51,8 @@ ensure_post_package_commands() {
   fi
 }
 
+# Make sure the account that will run websockify exists. We remember whether
+# we created it (in the state file) so uninstall knows whether to remove it.
 ensure_service_user() {
   local prior_created=""
   local prior_user=""
@@ -131,6 +136,9 @@ append_unique() {
   fi
 }
 
+# Work out every name and address this machine answers to, then derive the
+# Nginx server_name list, the certificate SAN list, the active cert/key paths,
+# and the endpoint URL we print at the end of the install.
 build_runtime_names() {
   local -a server_names=()
   local -a sans=()

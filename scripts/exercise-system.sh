@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# Pass/fail test harness for the installer. The default mode is safe to run
+# anywhere (help, validation, and dry-run cases only); --live performs real
+# installs and is meant for disposable test systems. Run with -h for options.
 set -Eeuo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

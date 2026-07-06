@@ -1,3 +1,6 @@
+# 90-actions-main.sh — the top-level actions (install, verify, status,
+# rollback, uninstall, user management, logs) and the main() dispatcher.
+
 verify_installation() {
   local failures=0
 
@@ -92,6 +95,11 @@ print_endpoint_summary() {
   info "HTTPS username: ${WEB_USER}"
 }
 
+# The install flow, in order: validate inputs, check the system, back up
+# everything we are about to touch, set up the VNC backend, write configs
+# and certificates, start services, and verify the result. Once the backup
+# exists (INSTALL_STARTED=1), any failure triggers an automatic rollback via
+# the ERR trap in 10-core.sh.
 install_action() {
   CURRENT_ACTION="install"
 
@@ -379,6 +387,9 @@ remove_service_user_if_created() {
   fi
 }
 
+# Remove everything the installer manages. Raspberry Pi VNC configs are
+# restored from the backup taken at install time; if the installer was the
+# one that enabled Pi VNC, it is stopped and disabled too.
 uninstall_action() {
   local install_backup_dir=""
 

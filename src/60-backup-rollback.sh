@@ -1,3 +1,10 @@
+# 60-backup-rollback.sh — backups of every file the installer touches,
+# rollback from those backups, and safety guards around file removal.
+
+# Allowlist of paths the installer is ever allowed to delete or restore.
+# remove_path() refuses anything not on this list, so a corrupted state file
+# or backup manifest can never trick rollback/uninstall into rm -rf'ing
+# something we don't own. Keep in sync with the paths in 00-bootstrap.sh.
 safe_managed_path() {
   local path="$1"
 
@@ -44,6 +51,9 @@ prepare_backup_dir() {
   : > "${BACKUP_DIR_CURRENT}/manifest.tsv"
 }
 
+# Copy a path into the current backup directory and record it in the
+# manifest. Files that don't exist yet are recorded as "absent" so rollback
+# knows to delete them rather than restore them.
 backup_path() {
   local path="$1"
   local destination
@@ -159,6 +169,8 @@ restore_pi_vnc_configs_from_backup() {
   fi
 }
 
+# Walk a backup manifest and put every recorded path back the way it was:
+# restore "present" entries from the backup copy, delete "absent" ones.
 rollback_backup_dir() {
   local backup_dir="$1"
   local manifest="${backup_dir}/manifest.tsv"
@@ -238,6 +250,8 @@ remove_acme_webroot() {
   fi
 }
 
+# Refuse to overwrite a file we didn't create (no state file and no
+# "Managed by fast-webvnc" marker) unless the user passed --force.
 guard_existing_path() {
   local path="$1"
   local description="$2"

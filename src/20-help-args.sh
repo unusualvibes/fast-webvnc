@@ -1,3 +1,5 @@
+# 20-help-args.sh — the help text and command-line argument parsing.
+
 show_help() {
   cat <<'EOF'
 Fast WebVNC installer
@@ -29,7 +31,8 @@ Actions:
 
 Install options:
   --user NAME                 HTTPS Basic Auth username.
-  --password VALUE            HTTPS Basic Auth password. Prefer env/prompt; argv leaks.
+  --password VALUE            HTTPS Basic Auth password. Prefer the prompt or
+                              FAST_WEBVNC_PASSWORD; arguments show up in ps.
   --vnc-host HOST             Existing VNC backend host. Default: 127.0.0.1.
   --vnc-port PORT             Existing VNC backend port. Default: 5900.
   --auto-vnc                  Auto-enable/create a localhost VNC backend (default).
@@ -125,6 +128,8 @@ require_arg() {
   fi
 }
 
+# Parse the action word plus options. Every value option accepts both
+# "--option value" and "--option=value" forms, hence the paired cases.
 parse_args() {
   local seen_action=0
 

@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Builds the release tarball under dist/: rebuilds install.sh, then packages
+# the docs, installer, scripts, and sources with a versioned prefix.
 set -Eeuo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -58,13 +60,12 @@ prefix="fast-webvnc-${VERSION}/"
 
 tar \
   --exclude=.git \
-  --exclude=.agents \
-  --exclude=.codex \
   --exclude=dist \
   --transform="s,^,${prefix}," \
   -czf "$archive" \
   -C "$ROOT_DIR" \
   CHANGELOG.md \
+  CONTRIBUTING.md \
   LICENSE \
   README.md \
   install.sh \

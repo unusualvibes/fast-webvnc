@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Development entry point: sources the modules directly so you can run the
+# installer without rebuilding install.sh. Try: src/fast-webvnc.sh help
 set -Eeuo pipefail
 
 SRC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Rewrote the README and help text for newcomers and added CONTRIBUTING.md.
+- Added module header comments and explanatory comments throughout the source.
+
 ## 1.1.0 - 2026-05-24
 
 - Added multi-user Basic Auth management actions.

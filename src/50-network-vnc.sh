@@ -1,3 +1,6 @@
+# 50-network-vnc.sh — VNC backend detection, automatic Raspberry Pi VNC
+# (WayVNC/RealVNC) setup and hardening, and listener/port conflict checks.
+
 vnc_protocol_responds() {
   local host="$1"
   local port="$2"
@@ -139,6 +142,9 @@ systemd_unit_exists() {
   [[ -n "$output" ]] || systemctl cat "$unit" >/dev/null 2>&1
 }
 
+# WayVNC reads config from several places depending on how it is launched:
+# the system path, root's home, and per-user homes. List every candidate so
+# hardening and backup cover whichever one is actually in use.
 wayvnc_config_paths() {
   local home
   local sudo_home=""
@@ -161,6 +167,9 @@ wayvnc_config_paths() {
   fi
 }
 
+# Set key=value in a simple config file: replace any existing uncommented
+# entry for the key (keeping comments intact) or append it, preserving the
+# file's permissions.
 harden_config_key() {
   local path="$1"
   local key="$2"
@@ -231,6 +240,8 @@ harden_realvnc_config() {
   fi
 
   info "Hardening Raspberry Pi RealVNC for loopback-only noVNC proxying"
+  # Authentication/encryption are handled at the HTTPS layer; the VNC side
+  # must speak plain RFB for noVNC, which is safe on a loopback-only listener.
   harden_config_key "$PI_REALVNC_CONFIG_FILE" localhost TRUE
   harden_config_key "$PI_REALVNC_CONFIG_FILE" IpListenAddresses 127.0.0.1
   harden_config_key "$PI_REALVNC_CONFIG_FILE" RfbPort "$VNC_PORT"
@@ -419,6 +430,10 @@ try_start_raspberry_pi_vnc_services() {
   return 1
 }
 
+# The main VNC backend gate for install: confirm a VNC server answers on the
+# configured host/port and (for localhost) that it only listens on loopback.
+# If nothing answers and auto-setup is allowed, try to enable and harden the
+# Raspberry Pi VNC service before giving up with remediation advice.
 ensure_vnc_backend() {
   info "Checking VNC backend at ${VNC_HOST}:${VNC_PORT}"
 

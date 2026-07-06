@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Concatenates the src/ modules (in order) into the single-file install.sh
+# release artifact. Use --check to verify install.sh is up to date, as CI does.
 set -Eeuo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

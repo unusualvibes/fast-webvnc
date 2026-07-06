@@ -1,3 +1,10 @@
+# 70-config-generation.sh — generates every config file the installer
+# manages: the systemd unit, Nginx sites, TLS certificates, Certbot hooks,
+# and the Basic Auth htpasswd file.
+
+# Write the websockify systemd unit. The long [Service] block is systemd
+# sandboxing: the proxy runs as an unprivileged user with no capabilities
+# and a read-only view of the system.
 write_service_file() {
   local tmp
 
@@ -66,6 +73,8 @@ prepare_acme_webroot() {
   find "$ACME_WEBROOT" -type d -exec chmod 0755 {} +
 }
 
+# Write a minimal port-80 site that only serves ACME challenges, used to
+# pass HTTP-01 validation before the real HTTPS site exists.
 write_nginx_acme_site() {
   local tmp
 
@@ -103,6 +112,10 @@ EOF
   ln -sfn "$NGINX_SITE" "$NGINX_SITE_LINK"
 }
 
+# Write the main HTTPS site: TLS hardening, security headers, Basic Auth
+# with rate limiting, and proxying to the local noVNC/websockify listener.
+# OCSP stapling and HSTS are only enabled for trusted (non-self-signed)
+# certificates, where they can actually work.
 write_nginx_site() {
   local tmp
   local trusted_tls_extra=""
@@ -257,6 +270,9 @@ generate_self_signed_cert() {
   chmod 0644 "$CERT_FILE"
 }
 
+# Generate Certbot DNS-01 hook scripts for Cloudflare: the auth hook creates
+# the _acme-challenge TXT record via the Cloudflare API, the cleanup hook
+# deletes it. The API token is stored in a root-only credentials file.
 write_cloudflare_hooks() {
   if [[ "$CERT_MODE" != "letsencrypt-dns" || -z "$CF_API_TOKEN" || -z "$CF_ZONE_ID" ]]; then
     return
@@ -409,6 +425,9 @@ EOF
   rm -f "$tmp"
 }
 
+# Before asking Let's Encrypt to validate, serve a test token through our own
+# Nginx site and fetch it locally. This catches server_name conflicts and
+# routing mistakes without burning an ACME validation attempt.
 verify_local_acme_challenge_route() {
   local token_path="${ACME_WEBROOT}/.well-known/acme-challenge/fast-webvnc-local-check"
   local token_value="fast-webvnc-acme-ok"

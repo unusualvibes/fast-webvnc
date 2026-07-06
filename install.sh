@@ -1,16 +1,24 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-# Release install.sh is generated from src/*.sh by scripts/build-release.sh.
-# Edit the sourced modules, then rebuild the single-file installer.
+# 00-bootstrap.sh — constants, managed paths, defaults, and global state.
+#
+# The release install.sh is generated from src/*.sh by scripts/build-release.sh.
+# Edit the modules here, then rebuild the single-file installer.
 
 VERSION="1.1.0"
+
+# Exit codes, loosely following BSD sysexits: 64 for bad usage, then one
+# distinct code per failure phase so scripts can tell them apart.
 
 EXIT_USAGE=64
 EXIT_PRECHECK=65
 EXIT_VERIFY=66
 EXIT_ROLLBACK=67
 
+# Every file the installer creates or manages lives at one of these paths.
+# Keep this list in sync with safe_managed_path() in 60-backup-rollback.sh,
+# which allowlists what rollback/uninstall are permitted to delete.
 SERVICE_NAME="fast-webvnc.service"
 SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}"
 VNC_BACKEND_SERVICE_NAME="fast-webvnc-x11vnc.service"
@@ -36,6 +44,8 @@ BACKUP_ROOT="/var/backups/fast-webvnc"
 DEFAULT_SERVICE_USER="fast-webvnc"
 MIN_PASSWORD_LENGTH=12
 
+# Runtime flags and derived values, filled in by argument parsing and the
+# preflight/runtime-detection steps.
 ACTION=""
 DRY_RUN=0
 FORCE=0
@@ -71,6 +81,8 @@ PASSWORD_FROM_ARG=0
 VNC_BACKEND_MANAGED=0
 PI_VNC_AUTOMANAGED=0
 
+# User-facing settings. Each one can come from (highest precedence first)
+# a command-line flag, a FAST_WEBVNC_* environment variable, or the default.
 WEB_USER="${FAST_WEBVNC_USER:-}"
 WEB_PASSWORD="${FAST_WEBVNC_PASSWORD:-}"
 VNC_HOST="${FAST_WEBVNC_VNC_HOST:-127.0.0.1}"
@@ -83,6 +95,7 @@ SERVICE_USER="${FAST_WEBVNC_SERVICE_USER:-}"
 CERT_MODE="${FAST_WEBVNC_CERT_MODE:-self-signed}"
 LE_EMAIL="${FAST_WEBVNC_EMAIL:-}"
 
+# Supplying a certificate or key implies --cert-mode provided.
 if [[ -n "$PROVIDED_CERT_FILE" || -n "$PROVIDED_KEY_FILE" ]]; then
   CERT_MODE="provided"
 fi
@@ -96,6 +109,9 @@ if [[ -n "$SERVICE_USER" ]]; then
 fi
 
 # ---- src/10-core.sh ----
+
+# 10-core.sh — logging helpers, the dry-run command wrapper, and the error
+# trap that rolls back a failed install.
 
 log() {
   printf '%s\n' "$*"
@@ -132,6 +148,9 @@ die() {
   exit "$status"
 }
 
+# Run a command, or just print it when --dry-run is active. Anything that
+# changes system state should go through this wrapper (or check DRY_RUN
+# itself) so dry runs stay side-effect free.
 run() {
   if (( DRY_RUN )); then
     info "DRY-RUN: $*"
@@ -142,6 +161,8 @@ run() {
   "$@"
 }
 
+# ERR trap: if a real install fails partway through, restore the files that
+# were backed up at the start of the run so the system is left as we found it.
 err_trap() {
   local line="$1"
   local status="$2"
@@ -166,6 +187,8 @@ trap 'err_trap "$LINENO" "$?"' ERR
 
 
 # ---- src/20-help-args.sh ----
+
+# 20-help-args.sh — the help text and command-line argument parsing.
 
 show_help() {
   cat <<'EOF'
@@ -198,7 +221,8 @@ Actions:
 
 Install options:
   --user NAME                 HTTPS Basic Auth username.
-  --password VALUE            HTTPS Basic Auth password. Prefer env/prompt; argv leaks.
+  --password VALUE            HTTPS Basic Auth password. Prefer the prompt or
+                              FAST_WEBVNC_PASSWORD; arguments show up in ps.
   --vnc-host HOST             Existing VNC backend host. Default: 127.0.0.1.
   --vnc-port PORT             Existing VNC backend port. Default: 5900.
   --auto-vnc                  Auto-enable/create a localhost VNC backend (default).
@@ -294,6 +318,8 @@ require_arg() {
   fi
 }
 
+# Parse the action word plus options. Every value option accepts both
+# "--option value" and "--option=value" forms, hence the paired cases.
 parse_args() {
   local seen_action=0
 
@@ -511,6 +537,9 @@ parse_args() {
 
 # ---- src/30-input-validation.sh ----
 
+# 30-input-validation.sh — interactive prompts, validation of user-supplied
+# values, and basic OS/root prechecks.
+
 prompt_with_default() {
   local prompt="$1"
   local default="$2"
@@ -545,6 +574,8 @@ valid_web_user_value() {
   [[ -n "$value" && "$value" != *:* && ! "$value" =~ [[:space:]] ]]
 }
 
+# Suggest a Basic Auth username: prefer the person who ran sudo, fall back
+# through the usual login variables, and finally offer "vncadmin".
 detect_web_user_default() {
   local candidate=""
   local uid_name=""
@@ -709,6 +740,8 @@ is_trusted_cert_mode() {
   [[ "$CERT_MODE" == "letsencrypt" || "$CERT_MODE" == "letsencrypt-dns" || "$CERT_MODE" == "provided" ]]
 }
 
+# Rough check that a name could be issued a public certificate: it must be a
+# dotted DNS name, not an IP, not .local, and each label must be well-formed.
 is_public_dns_name() {
   local value="$1"
   local label
@@ -999,6 +1032,9 @@ preflight_base() {
 
 # ---- src/40-preflight-runtime.sh ----
 
+# 40-preflight-runtime.sh — package installation, the dedicated service user,
+# and detection of runtime values (LAN IPs, hostnames, the noVNC web root).
+
 run_apt() {
   if (( DRY_RUN )); then
     info "DRY-RUN: DEBIAN_FRONTEND=noninteractive ${APT_CMD} $*"
@@ -1049,6 +1085,8 @@ ensure_post_package_commands() {
   fi
 }
 
+# Make sure the account that will run websockify exists. We remember whether
+# we created it (in the state file) so uninstall knows whether to remove it.
 ensure_service_user() {
   local prior_created=""
   local prior_user=""
@@ -1132,6 +1170,9 @@ append_unique() {
   fi
 }
 
+# Work out every name and address this machine answers to, then derive the
+# Nginx server_name list, the certificate SAN list, the active cert/key paths,
+# and the endpoint URL we print at the end of the install.
 build_runtime_names() {
   local -a server_names=()
   local -a sans=()
@@ -1249,6 +1290,9 @@ detect_novnc_web_root() {
 }
 
 # ---- src/50-network-vnc.sh ----
+
+# 50-network-vnc.sh — VNC backend detection, automatic Raspberry Pi VNC
+# (WayVNC/RealVNC) setup and hardening, and listener/port conflict checks.
 
 vnc_protocol_responds() {
   local host="$1"
@@ -1391,6 +1435,9 @@ systemd_unit_exists() {
   [[ -n "$output" ]] || systemctl cat "$unit" >/dev/null 2>&1
 }
 
+# WayVNC reads config from several places depending on how it is launched:
+# the system path, root's home, and per-user homes. List every candidate so
+# hardening and backup cover whichever one is actually in use.
 wayvnc_config_paths() {
   local home
   local sudo_home=""
@@ -1413,6 +1460,9 @@ wayvnc_config_paths() {
   fi
 }
 
+# Set key=value in a simple config file: replace any existing uncommented
+# entry for the key (keeping comments intact) or append it, preserving the
+# file's permissions.
 harden_config_key() {
   local path="$1"
   local key="$2"
@@ -1483,6 +1533,8 @@ harden_realvnc_config() {
   fi
 
   info "Hardening Raspberry Pi RealVNC for loopback-only noVNC proxying"
+  # Authentication/encryption are handled at the HTTPS layer; the VNC side
+  # must speak plain RFB for noVNC, which is safe on a loopback-only listener.
   harden_config_key "$PI_REALVNC_CONFIG_FILE" localhost TRUE
   harden_config_key "$PI_REALVNC_CONFIG_FILE" IpListenAddresses 127.0.0.1
   harden_config_key "$PI_REALVNC_CONFIG_FILE" RfbPort "$VNC_PORT"
@@ -1671,6 +1723,10 @@ try_start_raspberry_pi_vnc_services() {
   return 1
 }
 
+# The main VNC backend gate for install: confirm a VNC server answers on the
+# configured host/port and (for localhost) that it only listens on loopback.
+# If nothing answers and auto-setup is allowed, try to enable and harden the
+# Raspberry Pi VNC service before giving up with remediation advice.
 ensure_vnc_backend() {
   info "Checking VNC backend at ${VNC_HOST}:${VNC_PORT}"
 
@@ -1895,6 +1951,13 @@ detect_vnc_provider() {
 
 # ---- src/60-backup-rollback.sh ----
 
+# 60-backup-rollback.sh — backups of every file the installer touches,
+# rollback from those backups, and safety guards around file removal.
+
+# Allowlist of paths the installer is ever allowed to delete or restore.
+# remove_path() refuses anything not on this list, so a corrupted state file
+# or backup manifest can never trick rollback/uninstall into rm -rf'ing
+# something we don't own. Keep in sync with the paths in 00-bootstrap.sh.
 safe_managed_path() {
   local path="$1"
 
@@ -1941,6 +2004,9 @@ prepare_backup_dir() {
   : > "${BACKUP_DIR_CURRENT}/manifest.tsv"
 }
 
+# Copy a path into the current backup directory and record it in the
+# manifest. Files that don't exist yet are recorded as "absent" so rollback
+# knows to delete them rather than restore them.
 backup_path() {
   local path="$1"
   local destination
@@ -2056,6 +2122,8 @@ restore_pi_vnc_configs_from_backup() {
   fi
 }
 
+# Walk a backup manifest and put every recorded path back the way it was:
+# restore "present" entries from the backup copy, delete "absent" ones.
 rollback_backup_dir() {
   local backup_dir="$1"
   local manifest="${backup_dir}/manifest.tsv"
@@ -2135,6 +2203,8 @@ remove_acme_webroot() {
   fi
 }
 
+# Refuse to overwrite a file we didn't create (no state file and no
+# "Managed by fast-webvnc" marker) unless the user passed --force.
 guard_existing_path() {
   local path="$1"
   local description="$2"
@@ -2171,6 +2241,13 @@ guard_existing_managed_paths() {
 
 # ---- src/70-config-generation.sh ----
 
+# 70-config-generation.sh — generates every config file the installer
+# manages: the systemd unit, Nginx sites, TLS certificates, Certbot hooks,
+# and the Basic Auth htpasswd file.
+
+# Write the websockify systemd unit. The long [Service] block is systemd
+# sandboxing: the proxy runs as an unprivileged user with no capabilities
+# and a read-only view of the system.
 write_service_file() {
   local tmp
 
@@ -2239,6 +2316,8 @@ prepare_acme_webroot() {
   find "$ACME_WEBROOT" -type d -exec chmod 0755 {} +
 }
 
+# Write a minimal port-80 site that only serves ACME challenges, used to
+# pass HTTP-01 validation before the real HTTPS site exists.
 write_nginx_acme_site() {
   local tmp
 
@@ -2276,6 +2355,10 @@ EOF
   ln -sfn "$NGINX_SITE" "$NGINX_SITE_LINK"
 }
 
+# Write the main HTTPS site: TLS hardening, security headers, Basic Auth
+# with rate limiting, and proxying to the local noVNC/websockify listener.
+# OCSP stapling and HSTS are only enabled for trusted (non-self-signed)
+# certificates, where they can actually work.
 write_nginx_site() {
   local tmp
   local trusted_tls_extra=""
@@ -2430,6 +2513,9 @@ generate_self_signed_cert() {
   chmod 0644 "$CERT_FILE"
 }
 
+# Generate Certbot DNS-01 hook scripts for Cloudflare: the auth hook creates
+# the _acme-challenge TXT record via the Cloudflare API, the cleanup hook
+# deletes it. The API token is stored in a root-only credentials file.
 write_cloudflare_hooks() {
   if [[ "$CERT_MODE" != "letsencrypt-dns" || -z "$CF_API_TOKEN" || -z "$CF_ZONE_ID" ]]; then
     return
@@ -2582,6 +2668,9 @@ EOF
   rm -f "$tmp"
 }
 
+# Before asking Let's Encrypt to validate, serve a test token through our own
+# Nginx site and fetch it locally. This catches server_name conflicts and
+# routing mistakes without burning an ACME validation attempt.
 verify_local_acme_challenge_route() {
   local token_path="${ACME_WEBROOT}/.well-known/acme-challenge/fast-webvnc-local-check"
   local token_value="fast-webvnc-acme-ok"
@@ -2666,9 +2755,13 @@ write_auth_file() {
 
 # ---- src/80-state-verify-helpers.sh ----
 
+# 80-state-verify-helpers.sh — the install state file (what verify, rollback,
+# and uninstall rely on) plus the individual checks run by the verify action.
+
 state_write_line() {
   local key="$1"
   local value="$2"
+  # %q shell-quotes the value, so the state file is safe to source later.
   printf '%s=%q\n' "$key" "$value"
 }
 
@@ -2734,6 +2827,8 @@ write_state_file() {
   rm -f "$tmp"
 }
 
+# Load the state file from a previous install. The fallback defaults below
+# keep newer installers compatible with state written by older versions.
 load_state() {
   if [[ ! -f "$STATE_FILE" ]]; then
     return 1
@@ -2887,6 +2982,8 @@ check_novnc_listener() {
   return 1
 }
 
+# Hit the public HTTPS endpoint. Any of 401 (auth prompt), 302 (redirect to
+# vnc.html), or 200 means Nginx, TLS, and the proxy chain are all working.
 curl_https_check() {
   local url
   local code
@@ -2961,6 +3058,9 @@ check_websocket_upgrade() {
 }
 
 # ---- src/90-actions-main.sh ----
+
+# 90-actions-main.sh — the top-level actions (install, verify, status,
+# rollback, uninstall, user management, logs) and the main() dispatcher.
 
 verify_installation() {
   local failures=0
@@ -3056,6 +3156,11 @@ print_endpoint_summary() {
   info "HTTPS username: ${WEB_USER}"
 }
 
+# The install flow, in order: validate inputs, check the system, back up
+# everything we are about to touch, set up the VNC backend, write configs
+# and certificates, start services, and verify the result. Once the backup
+# exists (INSTALL_STARTED=1), any failure triggers an automatic rollback via
+# the ERR trap in 10-core.sh.
 install_action() {
   CURRENT_ACTION="install"
 
@@ -3343,6 +3448,9 @@ remove_service_user_if_created() {
   fi
 }
 
+# Remove everything the installer manages. Raspberry Pi VNC configs are
+# restored from the backup taken at install time; if the installer was the
+# one that enabled Pi VNC, it is stopped and disabled too.
 uninstall_action() {
   local install_backup_dir=""
 

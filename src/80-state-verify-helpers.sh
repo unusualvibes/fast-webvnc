@@ -1,6 +1,10 @@
+# 80-state-verify-helpers.sh — the install state file (what verify, rollback,
+# and uninstall rely on) plus the individual checks run by the verify action.
+
 state_write_line() {
   local key="$1"
   local value="$2"
+  # %q shell-quotes the value, so the state file is safe to source later.
   printf '%s=%q\n' "$key" "$value"
 }
 
@@ -66,6 +70,8 @@ write_state_file() {
   rm -f "$tmp"
 }
 
+# Load the state file from a previous install. The fallback defaults below
+# keep newer installers compatible with state written by older versions.
 load_state() {
   if [[ ! -f "$STATE_FILE" ]]; then
     return 1
@@ -219,6 +225,8 @@ check_novnc_listener() {
   return 1
 }
 
+# Hit the public HTTPS endpoint. Any of 401 (auth prompt), 302 (redirect to
+# vnc.html), or 200 means Nginx, TLS, and the proxy chain are all working.
 curl_https_check() {
   local url
   local code

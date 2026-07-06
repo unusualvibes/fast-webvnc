@@ -1,3 +1,6 @@
+# 10-core.sh — logging helpers, the dry-run command wrapper, and the error
+# trap that rolls back a failed install.
+
 log() {
   printf '%s\n' "$*"
 }
@@ -33,6 +36,9 @@ die() {
   exit "$status"
 }
 
+# Run a command, or just print it when --dry-run is active. Anything that
+# changes system state should go through this wrapper (or check DRY_RUN
+# itself) so dry runs stay side-effect free.
 run() {
   if (( DRY_RUN )); then
     info "DRY-RUN: $*"
@@ -43,6 +49,8 @@ run() {
   "$@"
 }
 
+# ERR trap: if a real install fails partway through, restore the files that
+# were backed up at the start of the run so the system is left as we found it.
 err_trap() {
   local line="$1"
   local status="$2"

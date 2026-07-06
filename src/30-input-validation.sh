@@ -1,3 +1,6 @@
+# 30-input-validation.sh — interactive prompts, validation of user-supplied
+# values, and basic OS/root prechecks.
+
 prompt_with_default() {
   local prompt="$1"
   local default="$2"
@@ -32,6 +35,8 @@ valid_web_user_value() {
   [[ -n "$value" && "$value" != *:* && ! "$value" =~ [[:space:]] ]]
 }
 
+# Suggest a Basic Auth username: prefer the person who ran sudo, fall back
+# through the usual login variables, and finally offer "vncadmin".
 detect_web_user_default() {
   local candidate=""
   local uid_name=""
@@ -196,6 +201,8 @@ is_trusted_cert_mode() {
   [[ "$CERT_MODE" == "letsencrypt" || "$CERT_MODE" == "letsencrypt-dns" || "$CERT_MODE" == "provided" ]]
 }
 
+# Rough check that a name could be issued a public certificate: it must be a
+# dotted DNS name, not an IP, not .local, and each label must be well-formed.
 is_public_dns_name() {
   local value="$1"
   local label

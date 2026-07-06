@@ -1,16 +1,24 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-# Release install.sh is generated from src/*.sh by scripts/build-release.sh.
-# Edit the sourced modules, then rebuild the single-file installer.
+# 00-bootstrap.sh — constants, managed paths, defaults, and global state.
+#
+# The release install.sh is generated from src/*.sh by scripts/build-release.sh.
+# Edit the modules here, then rebuild the single-file installer.
 
 VERSION="1.1.0"
+
+# Exit codes, loosely following BSD sysexits: 64 for bad usage, then one
+# distinct code per failure phase so scripts can tell them apart.
 
 EXIT_USAGE=64
 EXIT_PRECHECK=65
 EXIT_VERIFY=66
 EXIT_ROLLBACK=67
 
+# Every file the installer creates or manages lives at one of these paths.
+# Keep this list in sync with safe_managed_path() in 60-backup-rollback.sh,
+# which allowlists what rollback/uninstall are permitted to delete.
 SERVICE_NAME="fast-webvnc.service"
 SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}"
 VNC_BACKEND_SERVICE_NAME="fast-webvnc-x11vnc.service"
@@ -36,6 +44,8 @@ BACKUP_ROOT="/var/backups/fast-webvnc"
 DEFAULT_SERVICE_USER="fast-webvnc"
 MIN_PASSWORD_LENGTH=12
 
+# Runtime flags and derived values, filled in by argument parsing and the
+# preflight/runtime-detection steps.
 ACTION=""
 DRY_RUN=0
 FORCE=0
@@ -71,6 +81,8 @@ PASSWORD_FROM_ARG=0
 VNC_BACKEND_MANAGED=0
 PI_VNC_AUTOMANAGED=0
 
+# User-facing settings. Each one can come from (highest precedence first)
+# a command-line flag, a FAST_WEBVNC_* environment variable, or the default.
 WEB_USER="${FAST_WEBVNC_USER:-}"
 WEB_PASSWORD="${FAST_WEBVNC_PASSWORD:-}"
 VNC_HOST="${FAST_WEBVNC_VNC_HOST:-127.0.0.1}"
@@ -83,6 +95,7 @@ SERVICE_USER="${FAST_WEBVNC_SERVICE_USER:-}"
 CERT_MODE="${FAST_WEBVNC_CERT_MODE:-self-signed}"
 LE_EMAIL="${FAST_WEBVNC_EMAIL:-}"
 
+# Supplying a certificate or key implies --cert-mode provided.
 if [[ -n "$PROVIDED_CERT_FILE" || -n "$PROVIDED_KEY_FILE" ]]; then
   CERT_MODE="provided"
 fi
