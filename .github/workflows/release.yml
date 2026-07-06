@@ -1,0 +1,56 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install ShellCheck
+        run: sudo apt-get update && sudo apt-get install -y shellcheck
+
+      - name: Validate release inputs
+        run: |
+          set -Eeuo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          source_version="$(awk -F= '$1 == "VERSION" {gsub(/"/, "", $2); print $2; exit}' src/00-bootstrap.sh)"
+          if [[ "$version" != "$source_version" ]]; then
+            printf 'Tag version %s does not match source VERSION %s\n' "$version" "$source_version" >&2
+            exit 1
+          fi
+
+      - name: Check release artifact
+        run: |
+          scripts/build-release.sh --check
+          bash -n install.sh
+          shellcheck --severity=style install.sh
+          shellcheck -x --source-path=. --severity=style scripts/*.sh src/fast-webvnc.sh
+
+      - name: Build tarball and checksum
+        run: |
+          set -Eeuo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          scripts/package-release.sh --version "$version"
+          sha256sum "dist/fast-webvnc-${version}.tar.gz" > "dist/fast-webvnc-${version}.tar.gz.sha256"
+          cat "dist/fast-webvnc-${version}.tar.gz.sha256"
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          gh release create "$GITHUB_REF_NAME" \
+            "dist/fast-webvnc-${version}.tar.gz" \
+            "dist/fast-webvnc-${version}.tar.gz.sha256" \
+            --verify-tag \
+            --title "Fast WebVNC ${version}" \
+            --generate-notes

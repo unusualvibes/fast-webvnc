@@ -3069,6 +3069,7 @@ install_action() {
     ensure_vnc_backend
   fi
   preflight_base
+  check_port_conflicts
   install_packages
   ensure_post_package_commands
   detect_novnc_web_root
@@ -3076,7 +3077,6 @@ install_action() {
     require_vnc_loopback_only
   fi
   warn_if_letsencrypt_dns_unresolved
-  check_port_conflicts
   guard_existing_managed_paths
 
   prepare_backup_dir
