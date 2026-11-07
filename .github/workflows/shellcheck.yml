@@ -17,6 +17,8 @@ jobs:
           bash -n install.sh
           shellcheck --severity=style install.sh
           shellcheck -x --source-path=. --severity=style scripts/build-release.sh src/fast-webvnc.sh
+      - name: Wayland backend tests
+        run: bash scripts/test-wayland.sh
       - name: Dry-run smoke
         run: |
           python3 -m http.server 15900 --bind 127.0.0.1 >/tmp/fast-webvnc-smoke.log 2>&1 &

@@ -39,6 +39,28 @@ sudo FAST_WEBVNC_USER=admin FAST_WEBVNC_PASSWORD='change-me-now' \
   ./install.sh install --non-interactive
 ```
 
+## Wayland desktops
+
+Log into the desktop, then run the installer with `sudo` from that user's
+terminal. On labwc (including Raspberry Pi OS) and Sway, the installer can
+install WayVNC and connect it to the user's running Wayland display. Existing
+Raspberry Pi WayVNC system services retain their normal startup path.
+The managed backend listens only on `127.0.0.1` and uses HTTPS authentication.
+Use `--no-auto-vnc` to keep managing your own backend.
+
+Automatic setup requires exactly one Wayland socket for the invoking user
+(or exactly one desktop when running directly as root). The desktop session
+must stay logged in for screen sharing; this does not create a desktop or
+share the login screen. Re-run installation if the user's display socket changes.
+For compatibility, the managed WayVNC unit uses the legacy name
+`fast-webvnc-x11vnc.service`; inspect it with
+`sudo journalctl -u fast-webvnc-x11vnc.service`.
+
+WayVNC supports wlroots compositors, including labwc and Sway. It does not
+support GNOME or KDE. Those desktops need a separately configured VNC server
+on loopback; their RDP sharing endpoints cannot be connected to noVNC.
+See the [WayVNC documentation](https://github.com/any1/wayvnc#introduction).
+
 ## Certificate options
 
 The default is a **self-signed certificate**, which works everywhere but makes browsers show a warning on first visit. For a trusted certificate, you have three options:

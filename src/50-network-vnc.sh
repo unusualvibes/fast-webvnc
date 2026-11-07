@@ -102,7 +102,10 @@ ${auto_text}
 Common fixes:
   WayVNC: enable VNC in Raspberry Pi Configuration or raspi-config, then make
           sure it listens on 127.0.0.1:${VNC_PORT}.
-  RealVNC: enable the VNC interface, or check:
+  Wayland: log into a labwc/Sway desktop before installing. Automatic setup
+          runs WayVNC as the desktop user. GNOME/KDE need a separate VNC
+          backend (RDP-only desktop sharing cannot be used by noVNC).
+  RealVNC (X11): enable the VNC interface, or check:
           sudo systemctl status vncserver-x11-serviced.service
 
 After the backend is reachable, re-run this installer.
@@ -361,7 +364,7 @@ restart_pi_vnc_units() {
 
 start_hardened_raspberry_pi_vnc() {
   if (( DRY_RUN )); then
-    info "DRY-RUN: enable and harden Raspberry Pi VNC for ${VNC_HOST}:${VNC_PORT}"
+    info "DRY-RUN: configure WayVNC for an available Wayland desktop, or enable and harden Raspberry Pi VNC for ${VNC_HOST}:${VNC_PORT}"
     return 0
   fi
 
@@ -430,6 +433,93 @@ try_start_raspberry_pi_vnc_services() {
   return 1
 }
 
+# Discover sockets rather than trusting sudo's stripped desktop environment.
+# Refuse ambiguous desktops instead of sharing an arbitrary user's screen.
+find_wayland_session() {
+  local socket uid owner
+  local count=0
+  WAYLAND_BACKEND_UID=""
+  WAYLAND_BACKEND_DISPLAY=""
+  for socket in /run/user/[0-9]*/wayland-*; do
+    [[ -S "$socket" ]] || continue
+    [[ "${socket##*/}" =~ ^wayland-[0-9]+$ ]] || continue
+    uid="${socket#/run/user/}"
+    uid="${uid%%/*}"
+    [[ "$(stat -c %u "$socket")" == "$uid" ]] || continue
+    owner="$(getent passwd "$uid" | cut -d: -f1)"
+    [[ -n "$owner" && "$uid" != 0 ]] || continue
+    if [[ -n "${SUDO_USER:-}" && "$SUDO_USER" != root && "$owner" != "$SUDO_USER" ]]; then
+      continue
+    fi
+    WAYLAND_BACKEND_UID="$uid"
+    WAYLAND_BACKEND_DISPLAY="${socket##*/}"
+    count=$((count + 1))
+  done
+  if (( count != 1 )); then
+    if (( count > 1 )); then
+      warn "Multiple Wayland displays found; start WayVNC in the intended desktop and re-run with --no-auto-vnc."
+    fi
+    return 1
+  fi
+}
+
+try_start_wayland_backend() {
+  local binary tmp
+
+  find_wayland_session || return 1
+  # A distro service already owns startup on Raspberry Pi; leave it to the
+  # existing configuration/hardening path rather than starting a competitor.
+  if systemd_unit_exists wayvnc.service; then
+    return 1
+  fi
+  if [[ -e "$VNC_BACKEND_SERVICE_FILE" ]] && ! managed_file_has_marker "$VNC_BACKEND_SERVICE_FILE"; then
+    warn "Refusing to overwrite unmanaged ${VNC_BACKEND_SERVICE_FILE}."
+    return 1
+  fi
+  if ! command -v wayvnc >/dev/null 2>&1; then
+    run_apt install -y wayvnc
+  fi
+  binary="$(command -v wayvnc)" || return 1
+  [[ "$binary" =~ ^/[a-zA-Z0-9/_.-]+$ ]] || return 1
+  info "Starting WayVNC for user ID ${WAYLAND_BACKEND_UID} on ${WAYLAND_BACKEND_DISPLAY}"
+  tmp="$(mktemp)"
+  # Retain the legacy backend unit name for state/rollback compatibility.
+  # An empty config avoids inheriting desktop authentication or LAN binding.
+  cat > "$tmp" <<EOF
+# Managed by fast-webvnc. Local changes may be overwritten by install.sh.
+[Unit]
+Description=Fast WebVNC Wayland desktop backend
+After=graphical.target
+StartLimitIntervalSec=0
+
+[Service]
+User=${WAYLAND_BACKEND_UID}
+Environment=XDG_RUNTIME_DIR=/run/user/${WAYLAND_BACKEND_UID}
+Environment=WAYLAND_DISPLAY=${WAYLAND_BACKEND_DISPLAY}
+ExecStart=${binary} --config=/dev/null 127.0.0.1 ${VNC_PORT}
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+UMask=0077
+
+[Install]
+WantedBy=graphical.target
+EOF
+  install -m 0644 "$tmp" "$VNC_BACKEND_SERVICE_FILE"
+  rm -f "$tmp"
+  VNC_BACKEND_MANAGED=1
+  if systemctl daemon-reload &&
+    systemctl enable "$VNC_BACKEND_SERVICE_NAME" &&
+    systemctl restart "$VNC_BACKEND_SERVICE_NAME" &&
+    wait_for_vnc_backend 10 1 && vnc_listeners_loopback_only; then
+    return 0
+  fi
+  systemctl stop "$VNC_BACKEND_SERVICE_NAME" >/dev/null 2>&1 || true
+  systemctl disable "$VNC_BACKEND_SERVICE_NAME" >/dev/null 2>&1 || true
+  warn "WayVNC could not attach to the desktop. Check journalctl -u ${VNC_BACKEND_SERVICE_NAME}. GNOME/KDE require a separate VNC backend; WayVNC supports wlroots compositors such as labwc and Sway."
+  return 1
+}
+
 # The main VNC backend gate for install: confirm a VNC server answers on the
 # configured host/port and (for localhost) that it only listens on loopback.
 # If nothing answers and auto-setup is allowed, try to enable and harden the
@@ -463,12 +553,12 @@ ensure_vnc_backend() {
   warn "No VNC backend is reachable at ${VNC_HOST}:${VNC_PORT}; attempting automatic setup."
 
   if (( DRY_RUN )); then
-    info "DRY-RUN: enable and harden Raspberry Pi VNC for ${VNC_HOST}:${VNC_PORT}"
+    info "DRY-RUN: configure WayVNC for an available Wayland desktop, or enable and harden Raspberry Pi VNC for ${VNC_HOST}:${VNC_PORT}"
     require_vnc_loopback_only
     return
   fi
 
-  if try_enable_raspberry_pi_vnc || try_start_raspberry_pi_vnc_services; then
+  if try_start_wayland_backend || try_enable_raspberry_pi_vnc || try_start_raspberry_pi_vnc_services; then
     require_vnc_loopback_only
     info "VNC backend is reachable at ${VNC_HOST}:${VNC_PORT}"
     mark_managed_vnc_backend_if_present

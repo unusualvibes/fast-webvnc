@@ -63,7 +63,9 @@ err_trap() {
     warn "Install failed at line ${line}; attempting to restore files touched by this run."
     ROLLBACK_IN_PROGRESS=1
     set +e
+    stop_disable_vnc_backend_if_managed
     rollback_backup_dir "$BACKUP_DIR_CURRENT"
+    restart_restored_service_if_present
     cleanup_empty_managed_dirs
     set -e
   fi

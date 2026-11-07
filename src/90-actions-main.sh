@@ -308,6 +308,11 @@ restart_nginx_if_available() {
 }
 
 restart_restored_service_if_present() {
+  if managed_file_has_marker "$VNC_BACKEND_SERVICE_FILE"; then
+    run systemctl daemon-reload
+    run systemctl enable "$VNC_BACKEND_SERVICE_NAME"
+    run systemctl restart "$VNC_BACKEND_SERVICE_NAME"
+  fi
   if [[ ! -f "$SERVICE_FILE" ]] || ! command -v systemctl >/dev/null 2>&1; then
     return
   fi
