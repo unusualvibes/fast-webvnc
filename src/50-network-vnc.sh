@@ -141,8 +141,8 @@ systemd_unit_exists() {
     return 1
   fi
 
-  output="$(systemctl list-unit-files "$unit" --no-legend 2>/dev/null || true)"
-  [[ -n "$output" ]] || systemctl cat "$unit" >/dev/null 2>&1
+  output="$(systemctl show "$unit" --property=LoadState --value 2>/dev/null || true)"
+  [[ "$output" == loaded ]]
 }
 
 # WayVNC reads config from several places depending on how it is launched:
@@ -333,6 +333,9 @@ restart_active_pi_vnc_units() {
 restart_pi_vnc_units() {
   local unit
   local started=0
+  local wayland=0
+
+  find_wayland_session && wayland=1
 
   if ! command -v systemctl >/dev/null 2>&1; then
     return 1
@@ -341,6 +344,11 @@ restart_pi_vnc_units() {
   while IFS= read -r unit; do
     [[ -z "$unit" ]] && continue
     if ! systemd_unit_exists "$unit"; then
+      continue
+    fi
+
+    # RealVNC can answer RFB on Wayland while displaying only an error page.
+    if (( wayland )) && [[ "$unit" != wayvnc.service ]]; then
       continue
     fi
 
@@ -520,12 +528,84 @@ EOF
   return 1
 }
 
+# Inspect the configured port, not unrelated VNC processes on other displays.
+vnc_backend_is_x11() {
+  local lines
+  lines="$(list_listener_lines_on_port "$VNC_PORT")"
+  grep -Eq '"(vncserver-x11[^" ]*|x11vnc)"' <<<"$lines"
+}
+
+migrate_x11_backend_to_wayland() {
+  local realvnc_active=0
+  local managed_active=0
+  local previous_backend=""
+
+  warn "An X11 VNC server is answering on ${VNC_HOST}:${VNC_PORT}, but the desktop uses Wayland; switching to WayVNC."
+  if (( DRY_RUN )); then
+    info "DRY-RUN: stop the X11 backend and configure WayVNC for the Wayland desktop"
+    return 0
+  fi
+
+  # Stop services rather than killing whichever PID happens to own the port.
+  if systemctl is-active --quiet vncserver-x11-serviced.service; then
+    realvnc_active=1
+    systemctl stop vncserver-x11-serviced.service || return 1
+  fi
+  if managed_file_has_marker "$VNC_BACKEND_SERVICE_FILE" &&
+    systemctl is-active --quiet "$VNC_BACKEND_SERVICE_NAME"; then
+    managed_active=1
+    previous_backend="$(mktemp)"
+    cp -p "$VNC_BACKEND_SERVICE_FILE" "$previous_backend"
+    systemctl stop "$VNC_BACKEND_SERVICE_NAME" || return 1
+  fi
+
+  # An administrator-started X11 server must be stopped by its owner.
+  if vnc_backend_is_x11; then
+    warn "The X11 listener is still running. Stop it before re-running installation."
+  elif { systemd_unit_exists wayvnc.service && start_hardened_raspberry_pi_vnc; } ||
+    try_start_wayland_backend; then
+    if (( realvnc_active )); then
+      systemctl disable vncserver-x11-serviced.service || return 1
+    fi
+    if (( managed_active )) && systemd_unit_exists wayvnc.service; then
+      systemctl disable "$VNC_BACKEND_SERVICE_NAME" || return 1
+    fi
+    [[ -z "$previous_backend" ]] || rm -f "$previous_backend"
+    require_vnc_loopback_only
+    return 0
+  fi
+
+  # Preserve the previous backend when WayVNC cannot start.
+  if (( realvnc_active )); then
+    systemctl start vncserver-x11-serviced.service || true
+  fi
+  if (( managed_active )); then
+    systemctl stop "$VNC_BACKEND_SERVICE_NAME" || true
+    cp -p "$previous_backend" "$VNC_BACKEND_SERVICE_FILE"
+    rm -f "$previous_backend"
+    systemctl daemon-reload
+    systemctl start "$VNC_BACKEND_SERVICE_NAME" || true
+  fi
+  return 1
+}
+
 # The main VNC backend gate for install: confirm a VNC server answers on the
 # configured host/port and (for localhost) that it only listens on loopback.
 # If nothing answers and auto-setup is allowed, try to enable and harden the
 # Raspberry Pi VNC service before giving up with remediation advice.
 ensure_vnc_backend() {
   info "Checking VNC backend at ${VNC_HOST}:${VNC_PORT}"
+
+  if is_local_host "$VNC_HOST" && find_wayland_session && vnc_backend_is_x11; then
+    if (( ! AUTO_VNC_BACKEND )); then
+      die "$EXIT_PRECHECK" "An X11 VNC backend is serving ${VNC_HOST}:${VNC_PORT} while the desktop uses Wayland. Enable WayVNC or re-run with --auto-vnc."
+    fi
+    if migrate_x11_backend_to_wayland; then
+      mark_managed_vnc_backend_if_present
+      return
+    fi
+    die "$EXIT_PRECHECK" "Could not replace the X11 VNC backend with WayVNC. Check the WayVNC service logs and ensure the labwc desktop is logged in."
+  fi
 
   if vnc_protocol_responds "$VNC_HOST" "$VNC_PORT"; then
     mark_managed_vnc_backend_if_present
@@ -556,6 +636,15 @@ ensure_vnc_backend() {
     info "DRY-RUN: configure WayVNC for an available Wayland desktop, or enable and harden Raspberry Pi VNC for ${VNC_HOST}:${VNC_PORT}"
     require_vnc_loopback_only
     return
+  fi
+
+  if find_wayland_session; then
+    if { systemd_unit_exists wayvnc.service && start_hardened_raspberry_pi_vnc; } || try_start_wayland_backend; then
+      require_vnc_loopback_only
+      mark_managed_vnc_backend_if_present
+      return
+    fi
+    die "$EXIT_PRECHECK" "WayVNC could not start for the Wayland desktop. Check journalctl -u wayvnc.service -u ${VNC_BACKEND_SERVICE_NAME}. RealVNC cannot share this desktop."
   fi
 
   if try_start_wayland_backend || try_enable_raspberry_pi_vnc || try_start_raspberry_pi_vnc_services; then

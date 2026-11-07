@@ -14,7 +14,7 @@ Browser ──HTTPS + Basic Auth──> Nginx ──> websockify/noVNC ──> V
 - **websockify** bridges browser WebSockets to the VNC protocol and serves the noVNC web pages.
 - **Your VNC server** (WayVNC or RealVNC on Raspberry Pi OS) stays bound to `127.0.0.1`, so it is never exposed to the network directly.
 
-If no VNC server is reachable on `127.0.0.1:5900`, the installer enables Raspberry Pi VNC for you through `raspi-config` and configures it for loopback-only access. VNC-side authentication and encryption are turned off for noVNC compatibility — remote access stays protected because the listener never leaves the machine and all network access goes through authenticated HTTPS. (Local processes on the Pi can reach the VNC port directly, as is normal for local sessions.) Pass `--no-auto-vnc` if you would rather manage the VNC backend yourself.
+If no VNC server is reachable on `127.0.0.1:5900`, the installer sets up WayVNC for an available Wayland desktop, or enables Raspberry Pi VNC through `raspi-config`, and configures loopback-only access. When you switch from X11 to Wayland, re-running `install` automatically replaces a detected X11 VNC backend with WayVNC. VNC-side authentication and encryption are turned off for noVNC compatibility — remote access stays protected because the listener never leaves the machine and all network access goes through authenticated HTTPS. (Local processes on the Pi can reach the VNC port directly, as is normal for local sessions.) Pass `--no-auto-vnc` if you would rather manage the VNC backend yourself.
 
 ## Requirements
 
@@ -138,6 +138,21 @@ Re-running `install` updates the managed service and site while preserving your 
 ## Troubleshooting
 
 **"No VNC server is reachable"** — automatic Raspberry Pi VNC setup was unavailable or failed. Enable WayVNC or RealVNC manually and make sure it listens on `127.0.0.1`.
+
+**"Cannot currently show the desktop" after switching to labwc/Wayland** —
+this can mean RealVNC's X11 server is still occupying the VNC port. With the
+labwc desktop logged in, re-run the updated installer from that user's terminal:
+
+```bash
+sudo ./install.sh install
+```
+
+Automatic backend setup is enabled by default; no separate service commands
+or `raspi-config` invocation are needed. The installer detects an X11 listener on the configured port and switches to
+WayVNC. It disables the conflicting RealVNC service after a successful switch.
+With `--no-auto-vnc`, it reports the incompatible backend instead. If the switch
+fails, inspect `sudo journalctl -u wayvnc.service -u fast-webvnc-x11vnc.service`.
+For a headless Pi, ensure the desktop session has a configured display/output.
 
 **`nginx -t` fails** — look for port or `server_name` conflicts in `/etc/nginx/sites-enabled/fast-webvnc` and any other enabled sites.
 
