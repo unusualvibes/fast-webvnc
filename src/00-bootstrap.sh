@@ -6,7 +6,7 @@ set -Eeuo pipefail
 # The release install.sh is generated from src/*.sh by scripts/build-release.sh.
 # Edit the modules here, then rebuild the single-file installer.
 
-VERSION="1.1.0"
+VERSION="1.2.0"
 
 # Exit codes, loosely following BSD sysexits: 64 for bad usage, then one
 # distinct code per failure phase so scripts can tell them apart.
