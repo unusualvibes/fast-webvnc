@@ -32,17 +32,17 @@ vnc_listeners_loopback_only() { return 0; }
 
 try_start_wayland_backend
 test "$VNC_BACKEND_MANAGED" = 1
-rg -q '^User=1000$' "$VNC_BACKEND_SERVICE_FILE"
-rg -q '^Environment=XDG_RUNTIME_DIR=/run/user/1000$' "$VNC_BACKEND_SERVICE_FILE"
-rg -q '^Environment=WAYLAND_DISPLAY=wayland-1$' "$VNC_BACKEND_SERVICE_FILE"
-rg -q '^ExecStart=/usr/bin/wayvnc --config=/dev/null 127.0.0.1 15900$' "$VNC_BACKEND_SERVICE_FILE"
-rg -q '^enable fast-webvnc-x11vnc.service$' "${TEST_DIR}/calls"
+grep -q '^User=1000$' "$VNC_BACKEND_SERVICE_FILE"
+grep -q '^Environment=XDG_RUNTIME_DIR=/run/user/1000$' "$VNC_BACKEND_SERVICE_FILE"
+grep -q '^Environment=WAYLAND_DISPLAY=wayland-1$' "$VNC_BACKEND_SERVICE_FILE"
+grep -q '^ExecStart=/usr/bin/wayvnc --config=/dev/null 127.0.0.1 15900$' "$VNC_BACKEND_SERVICE_FILE"
+grep -q '^enable fast-webvnc-x11vnc.service$' "${TEST_DIR}/calls"
 
 # Startup failure must stop retries and disable the failed backend.
 wait_for_vnc_backend() { return 1; }
 if try_start_wayland_backend; then exit 1; fi
-rg -q '^stop fast-webvnc-x11vnc.service$' "${TEST_DIR}/calls"
-rg -q '^disable fast-webvnc-x11vnc.service$' "${TEST_DIR}/calls"
+grep -q '^stop fast-webvnc-x11vnc.service$' "${TEST_DIR}/calls"
+grep -q '^disable fast-webvnc-x11vnc.service$' "${TEST_DIR}/calls"
 wait_for_vnc_backend() { return 0; }
 
 # Never replace an administrator's unit.
