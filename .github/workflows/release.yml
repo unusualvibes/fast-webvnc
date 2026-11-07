@@ -1,4 +1,4 @@
-name: Release
+name: Pre-release
 
 on:
   push:
@@ -42,7 +42,7 @@ jobs:
           sha256sum "dist/fast-webvnc-${version}.tar.gz" > "dist/fast-webvnc-${version}.tar.gz.sha256"
           cat "dist/fast-webvnc-${version}.tar.gz.sha256"
 
-      - name: Create GitHub release
+      - name: Create GitHub pre-release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -52,5 +52,6 @@ jobs:
             "dist/fast-webvnc-${version}.tar.gz" \
             "dist/fast-webvnc-${version}.tar.gz.sha256" \
             --verify-tag \
+            --prerelease \
             --title "Fast WebVNC ${version}" \
             --generate-notes
